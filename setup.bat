@@ -20,7 +20,7 @@ if errorlevel 1 (
 
 echo [1/2] Installing dependencies...
 echo.
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 echo.
 
 if errorlevel 1 (
@@ -33,6 +33,14 @@ echo [2/2] Creating folders...
 if not exist "PROJECTS" mkdir PROJECTS
 if not exist "templates" mkdir templates
 if not exist "config" mkdir config
+
+:: Create settings.yaml from example if not exists
+if not exist "config\settings.yaml" (
+    if exist "config\settings.example.yaml" (
+        copy "config\settings.example.yaml" "config\settings.yaml" >nul
+        echo Created config\settings.yaml
+    )
+)
 
 echo.
 echo ============================================
