@@ -1,0 +1,23 @@
+# VE3 Studio - Settings
+# Copy file nay thanh settings.yaml va dien thong tin
+
+# Server
+generation_mode: server
+local_server_url: "http://192.168.88.145:5000"
+local_server_list: []
+
+# Google Flow API
+flow_bearer_token: ""
+flow_project_id: ""
+flow_timeout: 120
+flow_aspect_ratio: landscape
+
+# Generation
+retry_count: 3
+max_concurrent: 1
+log_level: INFO
+
+# AI Provider (for SRT to Excel)
+deepseek_api_key: ""
+deepseek_api_keys: []
+topic: story
