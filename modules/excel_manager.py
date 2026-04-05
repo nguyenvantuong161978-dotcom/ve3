@@ -1013,12 +1013,8 @@ class PromptWorkbook:
         except Exception:
             pass
     
-    def safe_save(self, max_retries: int = 3) -> bool:
+    def safe_save(self, max_retries: int = 5) -> bool:
         """Save với retry + pending queue fallback.
-
-        v1.0.385: Dùng thay save() ở các chỗ Chrome workers gọi.
-        v1.0.441: Retry loop + pending writes queue khi thất bại.
-        v1.0.442: Giảm retries (3 thay vì 5) vì save() đã có direct overwrite fallback.
 
         Nếu sau max_retries vẫn fail → lưu pending changes vào .pending_writes.json.
         Lần load_or_create() tiếp theo sẽ flush pending writes.
@@ -1026,17 +1022,19 @@ class PromptWorkbook:
         import time
         for attempt in range(max_retries):
             try:
-                # Flush pending writes trước khi save
                 self._flush_pending_writes()
                 self.save()
                 return True
-            except Exception as e:
+            except PermissionError as e:
                 if attempt < max_retries - 1:
-                    delay = 3 * (attempt + 1)  # 3, 6 seconds
-                    self.logger.warning(f"safe_save() retry {attempt+1}/{max_retries} after {delay}s: {e}")
+                    delay = 2 * (attempt + 1)  # 2, 4, 6, 8s
+                    self.logger.warning(f"safe_save() file bị khóa, thử lại {attempt+1}/{max_retries} sau {delay}s...")
                     time.sleep(delay)
                 else:
-                    self.logger.warning(f"safe_save() failed after {max_retries} retries: {e}")
+                    self.logger.error(f"safe_save() thất bại sau {max_retries} lần: {e}")
+            except Exception as e:
+                self.logger.error(f"safe_save() lỗi: {e}")
+                break
         return False
 
     def _get_pending_path(self) -> Path:
@@ -1095,13 +1093,14 @@ class PromptWorkbook:
                 if wtype == 'scene':
                     scene_id = item.get('scene_id')
                     if scene_id:
-                        self.update_scene(
-                            int(scene_id),
-                            img_path=item.get('img_path'),
-                            status_img=item.get('status_img'),
-                            media_id=item.get('media_id')
-                        )
-                        applied += 1
+                        update_kw = {}
+                        for k in ['img_path', 'status_img', 'media_id',
+                                   'status_vid', 'video_path', 'video_prompt']:
+                            if item.get(k):
+                                update_kw[k] = item[k]
+                        if update_kw:
+                            self.update_scene(int(scene_id), **update_kw)
+                            applied += 1
                 elif wtype == 'character':
                     char_id = item.get('char_id')
                     if char_id:

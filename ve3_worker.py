@@ -318,7 +318,10 @@ class VE3Worker:
                     update_data["media_id"] = media_name
                 with self._excel_lock:
                     wb.update_character(char.id, **update_data)
-                    wb.safe_save()
+                    if not wb.safe_save():
+                        # Excel bị khóa — lưu pending write để không mất data
+                        wb._save_pending_write("character", char_id=char.id, **update_data)
+                        self.log(f"    {char.id}: Excel bị khóa, lưu pending write", "WARN")
                 completed_count[0] += 1
                 self.progress("refs", completed_count[0], len(tasks), char.id)
                 self.log(f"    {char.id} → OK ({elapsed}s, {server_info.get('server', '?')})")
@@ -422,7 +425,11 @@ class VE3Worker:
                     wb.update_scene(scene_id, status_img="done", img_path=str(img_path))
                     if media_name:
                         wb.update_scene(scene_id, media_id=media_name)
-                    wb.safe_save()
+                    if not wb.safe_save():
+                        wb._save_pending_write("scene", scene_id=scene_id,
+                                               status_img="done", img_path=str(img_path),
+                                               media_id=media_name or "")
+                        self.log(f"    Scene {scene_id}: Excel bị khóa, lưu pending write", "WARN")
                 completed_count[0] += 1
                 self.progress("scenes", completed_count[0], len(pending), f"scene_{scene_id:03d}")
                 self.log(f"    Scene {scene_id} → OK ({elapsed}s, {server_info.get('server', '?')})")
@@ -618,7 +625,10 @@ class VE3Worker:
             if success:
                 with self._excel_lock:
                     wb.update_scene(sid, status_vid="done", video_path=str(vid_path))
-                    wb.safe_save()
+                    if not wb.safe_save():
+                        wb._save_pending_write("scene", scene_id=sid,
+                                               status_vid="done", video_path=str(vid_path))
+                        self.log(f"    Video scene {sid}: Excel bị khóa, lưu pending write", "WARN")
                 completed_count[0] += 1
                 self.progress("videos", completed_count[0], len(pending), f"scene_{sid:03d}")
                 self.log(f"    Video scene {sid} → OK ({elapsed}s)")
