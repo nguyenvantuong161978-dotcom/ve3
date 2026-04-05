@@ -18,6 +18,7 @@ import os
 import time
 import json
 import shutil
+import threading
 from pathlib import Path
 from typing import Optional, Callable, Dict, List, Any
 from datetime import datetime
@@ -60,6 +61,7 @@ class VE3Worker:
         self.progress = progress_func or (lambda *a, **kw: None)
         self.on_item_status = on_item_status or (lambda *a, **kw: None)
         self._stop_flag = False
+        self._excel_lock = threading.Lock()
 
         # Paths
         self.nv_dir = self.project_dir / "nv"
@@ -260,10 +262,18 @@ class VE3Worker:
             else:
                 img_path = self.nv_dir / f"{char.id}.png"
 
-            # Kiểm tra file đã tồn tại và có media_id
+            # Skip nếu đã có ảnh + media_id
             if img_path.exists() and char.media_id:
                 self.log(f"  Skip {char.id} (đã có ảnh + media_id)")
+                # Đảm bảo status = done trong Excel
+                if char.status != "done":
+                    wb.update_character(char.id, status="done")
+                    wb.safe_save()
                 continue
+
+            # Skip nếu file ảnh có nhưng chưa ghi Excel (chạy dở lần trước)
+            if img_path.exists() and not char.media_id:
+                self.log(f"  {char.id}: có ảnh nhưng thiếu media_id — cần tạo lại", "WARN")
 
             pending.append((char, img_path))
 
@@ -306,8 +316,9 @@ class VE3Worker:
                 update_data = {"status": "done"}
                 if media_name:
                     update_data["media_id"] = media_name
-                wb.update_character(char.id, **update_data)
-                wb.safe_save()
+                with self._excel_lock:
+                    wb.update_character(char.id, **update_data)
+                    wb.safe_save()
                 completed_count[0] += 1
                 self.progress("refs", completed_count[0], len(tasks), char.id)
                 self.log(f"    {char.id} → OK ({elapsed}s, {server_info.get('server', '?')})")
@@ -347,15 +358,27 @@ class VE3Worker:
             self.log("Không có scenes trong Excel")
             return result
 
-        # Lọc scenes cần tạo
+        # Lọc scenes cần tạo ảnh
         pending = []
         for scene in scenes:
             if not scene.img_prompt:
                 continue
-            if scene.status_img and scene.status_img.lower() in ("done", "skip"):
-                img_path = self.img_dir / f"scene_{scene.scene_id:03d}.png"
-                if img_path.exists():
-                    continue
+            if scene.status_img and scene.status_img.lower() == "skip":
+                continue
+
+            img_path = self.img_dir / f"scene_{scene.scene_id:03d}.png"
+            media_id = getattr(scene, 'media_id', '') or ''
+
+            # Đã có ảnh + media_id → skip
+            if img_path.exists() and media_id:
+                if scene.status_img != "done":
+                    wb.update_scene(scene.scene_id, status_img="done")
+                    wb.safe_save()
+                continue
+
+            # Đã có ảnh nhưng thiếu media_id (chạy dở) → cần tạo lại
+            if img_path.exists() and not media_id:
+                self.log(f"  Scene {scene.scene_id}: có ảnh nhưng thiếu media_id — tạo lại", "WARN")
 
             pending.append(scene)
 
@@ -395,10 +418,11 @@ class VE3Worker:
             elapsed = round(time.time() - t0, 1)
 
             if success:
-                wb.update_scene(scene_id, status_img="done", img_path=str(img_path))
-                if media_name:
-                    wb.update_scene(scene_id, media_id=media_name)
-                wb.safe_save()
+                with self._excel_lock:
+                    wb.update_scene(scene_id, status_img="done", img_path=str(img_path))
+                    if media_name:
+                        wb.update_scene(scene_id, media_id=media_name)
+                    wb.safe_save()
                 completed_count[0] += 1
                 self.progress("scenes", completed_count[0], len(pending), f"scene_{scene_id:03d}")
                 self.log(f"    Scene {scene_id} → OK ({elapsed}s, {server_info.get('server', '?')})")
@@ -406,8 +430,9 @@ class VE3Worker:
                                     {"elapsed": elapsed, **server_info})
                 return True
             else:
-                wb.update_scene(scene_id, status_img="error")
-                wb.safe_save()
+                with self._excel_lock:
+                    wb.update_scene(scene_id, status_img="error")
+                    wb.safe_save()
                 self.log(f"    Scene {scene_id} → FAIL ({elapsed}s)", "WARN")
                 self.on_item_status("scene", scene_id, "error", None,
                                     {"elapsed": elapsed, **server_info})
@@ -547,10 +572,17 @@ class VE3Worker:
             sv = getattr(scene, 'status_vid', '') or ''
             if sv.lower() == "skip":
                 continue
-            if sv.lower() == "done":
-                vid_path = self.vid_dir / f"scene_{scene.scene_id:03d}.mp4"
-                if vid_path.exists():
-                    continue
+
+            vid_path = self.vid_dir / f"scene_{scene.scene_id:03d}.mp4"
+
+            # Đã có video file → skip, đảm bảo status = done
+            if vid_path.exists():
+                if sv != "done":
+                    wb.update_scene(scene.scene_id, status_vid="done", video_path=str(vid_path))
+                    wb.safe_save()
+                    self.log(f"  Scene {scene.scene_id}: video đã có, cập nhật status → done")
+                continue
+
             # Cần có ảnh + media_id để làm Image-to-Video
             img_path = self.img_dir / f"scene_{scene.scene_id:03d}.png"
             media_id = getattr(scene, 'media_id', '') or ''
@@ -584,8 +616,9 @@ class VE3Worker:
             elapsed = round(time.time() - t0, 1)
 
             if success:
-                wb.update_scene(sid, status_vid="done", video_path=str(vid_path))
-                wb.safe_save()
+                with self._excel_lock:
+                    wb.update_scene(sid, status_vid="done", video_path=str(vid_path))
+                    wb.safe_save()
                 completed_count[0] += 1
                 self.progress("videos", completed_count[0], len(pending), f"scene_{sid:03d}")
                 self.log(f"    Video scene {sid} → OK ({elapsed}s)")
@@ -593,8 +626,9 @@ class VE3Worker:
                                     {"elapsed": elapsed, "phase": "video", **server_info})
                 return True
             else:
-                wb.update_scene(sid, status_vid="error")
-                wb.safe_save()
+                with self._excel_lock:
+                    wb.update_scene(sid, status_vid="error")
+                    wb.safe_save()
                 self.log(f"    Video scene {sid} → FAIL ({elapsed}s)", "WARN")
                 self.on_item_status("scene", sid, "error", None,
                                     {"elapsed": elapsed, "phase": "video", **server_info})
