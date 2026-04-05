@@ -265,10 +265,10 @@ class VE3Worker:
             # Skip nếu đã có ảnh + media_id
             if img_path.exists() and char.media_id:
                 self.log(f"  Skip {char.id} (đã có ảnh + media_id)")
-                # Đảm bảo status = done trong Excel
                 if char.status != "done":
-                    wb.update_character(char.id, status="done")
-                    wb.safe_save()
+                    with self._excel_lock:
+                        wb.update_character(char.id, status="done")
+                        wb.safe_save()
                 continue
 
             # Skip nếu file ảnh có nhưng chưa ghi Excel (chạy dở lần trước)
@@ -375,8 +375,9 @@ class VE3Worker:
             # Đã có ảnh + media_id → skip
             if img_path.exists() and media_id:
                 if scene.status_img != "done":
-                    wb.update_scene(scene.scene_id, status_img="done")
-                    wb.safe_save()
+                    with self._excel_lock:
+                        wb.update_scene(scene.scene_id, status_img="done")
+                        wb.safe_save()
                 continue
 
             # Đã có ảnh nhưng thiếu media_id (chạy dở) → cần tạo lại
@@ -585,8 +586,9 @@ class VE3Worker:
             # Đã có video file → skip, đảm bảo status = done
             if vid_path.exists():
                 if sv != "done":
-                    wb.update_scene(scene.scene_id, status_vid="done", video_path=str(vid_path))
-                    wb.safe_save()
+                    with self._excel_lock:
+                        wb.update_scene(scene.scene_id, status_vid="done", video_path=str(vid_path))
+                        wb.safe_save()
                     self.log(f"  Scene {scene.scene_id}: video đã có, cập nhật status → done")
                 continue
 

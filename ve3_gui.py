@@ -343,10 +343,10 @@ class HomePage(ctk.CTkScrollableFrame):
         self.lbl_sync.grid(row=2, column=0, padx=10, pady=(0,6), sticky="w", columnspan=4)
 
     def load_server_config(self):
-        pass  # Server management moved to Settings
+        pass
 
     def update_server_status(self, infos):
-        pass  # Server status display moved to Settings
+        pass
 
     def _mk_progress(self):
         c = self._card(2, "Tiến độ")
@@ -570,6 +570,9 @@ class SettingsPage(ctk.CTkScrollableFrame):
         self.lbl_saved = ctk.CTkLabel(gc, text="", font=("",9), text_color=OK)
         self.lbl_saved.grid(row=5, column=0, columnspan=3, padx=10, pady=(0,6))
 
+        # ── Update ──
+        self._build_update_section()
+
     def _add(self):
         url = self.ent_url.get().strip()
         if not url: return
@@ -659,6 +662,72 @@ class SettingsPage(ctk.CTkScrollableFrame):
         self.app._save_config()
         self.lbl_saved.configure(text="✓ Đã lưu!")
         self.after(2000, lambda: self.lbl_saved.configure(text=""))
+
+    def _build_update_section(self):
+        """Nút cập nhật tool từ GitHub."""
+        uc = ctk.CTkFrame(self, fg_color=CD, corner_radius=8, border_width=1, border_color=BD)
+        uc.grid(row=2, column=0, sticky="ew", padx=10, pady=4)
+        uc.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(uc, text="Cập nhật phần mềm", font=("",13,"bold"), text_color=T1
+                     ).grid(row=0, column=0, padx=10, pady=(8,4), sticky="w", columnspan=2)
+
+        self.lbl_update = ctk.CTkLabel(uc, text="", font=("",10), text_color=T3)
+        self.lbl_update.grid(row=1, column=0, padx=10, sticky="w")
+
+        ctk.CTkButton(uc, text="Kiểm tra cập nhật", width=130, height=30,
+                      fg_color=RN, hover_color="#1565C0", text_color="#FFF",
+                      font=("",11), corner_radius=6,
+                      command=self._check_update).grid(row=1, column=1, padx=10, pady=(0,8))
+
+    def _check_update(self):
+        """Tải code mới từ GitHub zip, cập nhật file .py và modules/."""
+        self.lbl_update.configure(text="Đang tải cập nhật...", text_color=RN)
+
+        def _do():
+            import requests, zipfile, io, shutil
+            ZIP_URL = "https://github.com/nguyenvantuong161978-dotcom/ve3/archive/refs/heads/main.zip"
+            try:
+                r = requests.get(ZIP_URL, timeout=30)
+                if r.status_code != 200:
+                    self.after(0, lambda: self.lbl_update.configure(
+                        text=f"Lỗi tải: HTTP {r.status_code}", text_color=ER))
+                    return
+
+                z = zipfile.ZipFile(io.BytesIO(r.content))
+                # Zip có folder gốc "ve3-main/"
+                prefix = z.namelist()[0].split("/")[0] + "/"
+
+                updated = []
+                # Chỉ cập nhật file code, KHÔNG ghi đè config/settings.yaml, PROJECTS/, templates/
+                for name in z.namelist():
+                    rel = name[len(prefix):]
+                    if not rel or name.endswith("/"):
+                        continue
+                    # Chỉ cập nhật .py, .bat, requirements.txt
+                    if rel.endswith(".py") or rel.endswith(".bat") or rel == "requirements.txt":
+                        dest = VE3_DIR / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        with z.open(name) as src, open(dest, "wb") as dst:
+                            dst.write(src.read())
+                        updated.append(rel)
+                    # Cập nhật settings.example.yaml (không đè settings.yaml)
+                    elif rel == "config/settings.example.yaml":
+                        dest = VE3_DIR / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        with z.open(name) as src, open(dest, "wb") as dst:
+                            dst.write(src.read())
+                        updated.append(rel)
+
+                msg = f"Đã cập nhật {len(updated)} file. Khởi động lại tool để áp dụng."
+                self.after(0, lambda: self.lbl_update.configure(text=msg, text_color=OK))
+                self.after(0, lambda: self.app._log(f"Update: {len(updated)} files — {', '.join(updated[:5])}{'...' if len(updated)>5 else ''}", "SUCCESS"))
+
+            except Exception as e:
+                self.after(0, lambda: self.lbl_update.configure(
+                    text=f"Lỗi: {e}", text_color=ER))
+
+        threading.Thread(target=_do, daemon=True).start()
 
 
 # ── MAIN APP ─────────────────────────────────────────────
@@ -906,6 +975,7 @@ class VE3App(ctk.CTk):
                 el = round(_time.time()-t0,1); ex = {"elapsed":el, **si}
                 if ok:
                     self.wb.update_character(cid, status="done", media_id=med or ""); self.wb.safe_save()
+                    self.after(0, lambda: self._reload_wb())
                     self.after(0, lambda: self.pages["gen"].update_char(cid, "done", ex))
                     self.after(0, lambda: self._log(f"{cid} done ({el}s)","SUCCESS"))
                 else:
@@ -936,6 +1006,7 @@ class VE3App(ctk.CTk):
                 el = round(_time.time()-t0,1); ex = {"elapsed":el, **si}
                 if ok:
                     self.wb.update_scene(sid, status_img="done", media_id=med or ""); self.wb.safe_save()
+                    self.after(0, lambda: self._reload_wb())
                     self.after(0, lambda: self.pages["gen"].update_scene(sid, "done", ex))
                     self.after(0, lambda: self._log(f"Scene {sid} done ({el}s)","SUCCESS"))
                 else:
